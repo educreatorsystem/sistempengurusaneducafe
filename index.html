@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ms">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0F766E">
+  <meta name="description" content="Sistem pengurusan Pusat Sumber EduCafe @ D'Sutra, Sekolah Kebangsaan Sungai Tiram.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EduCafe">
+  <title>Sistem Pengurusan Pusat Sumber EduCafe @ D'Sutra</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <noscript>Sistem ini memerlukan JavaScript untuk berfungsi.</noscript>
+  <div id="app" class="app-shell">
+    <main class="boot-screen" aria-busy="true">
+      <div class="brand-mark">
+        <img src="https://iili.io/nFy3rhl.md.png" alt="Lencana Sekolah Kebangsaan Sungai Tiram">
+        <span>SKST</span>
+      </div>
+      <p>Memuatkan Sistem Pengurusan Pusat Sumber EduCafe @ D'Sutra...</p>
+    </main>
+  </div>
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div id="modalRoot" class="modal-root" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
+  <script defer src="app.js"></script>
+</body>
+</html>
