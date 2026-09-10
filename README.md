@@ -61,14 +61,18 @@ Nilai dalam config digunakan oleh aplikasi untuk menentukan sama ada Mod Demo pe
 4. Simpan projek sebagai EduCafe API.
 5. Pastikan zon masa projek ialah Asia/Kuala_Lumpur.
 
-## 4. Tetapkan akaun admin dalam Script Properties
+## 4. Akaun admin
 
 Jangan masukkan kata laluan dalam **index.html**, **app.js**, **config.js** atau mana-mana fail klien.
 
+Akaun admin lalai telah disediakan sebagai salt dan hash SHA-256 dalam kod pelayan. Pada log masuk pertama, Apps Script akan mencipta Script Properties admin dan semua helaian secara automatik. Kata laluan teks biasa tidak disimpan dalam fail projek.
+
+Untuk menukar akaun atau kata laluan kemudian:
+
 1. Buka **Project Settings > Script Properties**.
-2. Tambah INITIAL_ADMIN_USERNAME dengan nilai gurucemerlang.
-3. Tambah INITIAL_ADMIN_PASSWORD dengan kata laluan persediaan yang diberikan oleh pemilik sistem.
-4. Pilihan: tambah SESSION_TIMEOUT_MINUTES dengan nilai 30.
+2. Tambah `INITIAL_ADMIN_USERNAME` dengan nama pengguna baharu.
+3. Tambah `INITIAL_ADMIN_PASSWORD` dengan kata laluan baharu.
+4. Pilihan: tambah `SESSION_TIMEOUT_MINUTES` dengan nilai 30.
 5. Kembali ke editor dan jalankan fungsi **setupAdminAccount**.
 6. Benarkan akses Google Sheets apabila diminta.
 
@@ -156,7 +160,7 @@ PDF menggunakan jsPDF dan jsPDF-AutoTable melalui CDN. Lencana sekolah dimuatkan
 ## Penyelesaian masalah ringkas
 
 - **Masih dalam Mod Demo:** semak kedua-dua nilai dalam config.js dan pastikan URL bermula dengan https://script.google.com/.
-- **Log masuk gagal:** jalankan setupAdminAccount selepas menetapkan Script Properties.
+- **Log masuk gagal:** pastikan deployment menggunakan versi kod terkini. Untuk akaun tersuai, jalankan setupAdminAccount selepas menetapkan Script Properties.
 - **API tidak berubah selepas kemas kini:** deploy versi Web App baharu dan gunakan URL /exec.
 - **Carta/PDF tidak muncul:** semak internet atau polisi rangkaian kerana pustaka dimuatkan melalui CDN.
 - **Lencana gagal dimuatkan:** fallback SKST akan digunakan pada UI dan PDF.

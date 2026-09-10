@@ -8,6 +8,9 @@ var GOOGLE_SHEET_ID = "1T2mYQNl3ogtALF7fwqJqsAQAk7uwLO3Uz6_ZsODZAtI";
 var SESSION_TIMEOUT_MINUTES = 30;
 var MAX_LOGIN_ATTEMPTS = 5;
 var MIN_ADMIN_PASSWORD_LENGTH = 7;
+var BOOTSTRAP_ADMIN_USERNAME = "gurucemerlang";
+var BOOTSTRAP_ADMIN_PASSWORD_SALT = "65d64fa9f6e48c069176a020bb0772a7287004fdd8684e09ad77ca5baec497f4";
+var BOOTSTRAP_ADMIN_PASSWORD_HASH = "f4b4ad180a6647273167d9e139d05e4d83593a8b7690d638532835594bdfdf3c";
 
 var BASE_HEADERS = [
   "id",
@@ -106,16 +109,16 @@ var MODULE_TITLES = {
 };
 
 /**
- * Persediaan awal:
+ * Persediaan akaun tersuai (pilihan):
  * 1. Tambah Script Properties INITIAL_ADMIN_USERNAME dan INITIAL_ADMIN_PASSWORD.
- * 2. Tambah GOOGLE_SHEET_ID jika tidak mahu mengubah pemboleh ubah di atas.
- * 3. Jalankan setupAdminAccount sekali dari editor Apps Script.
+ * 2. Jalankan setupAdminAccount sekali dari editor Apps Script.
  *
- * Kata laluan asal dipadam selepas hash selamat disimpan.
+ * Jika langkah ini tidak dibuat, akaun bootstrap berhash akan disediakan
+ * secara automatik pada percubaan log masuk pertama.
  */
 function setupAdminAccount() {
   var properties = PropertiesService.getScriptProperties();
-  var username = String(properties.getProperty("INITIAL_ADMIN_USERNAME") || "gurucemerlang").trim();
+  var username = String(properties.getProperty("INITIAL_ADMIN_USERNAME") || BOOTSTRAP_ADMIN_USERNAME).trim();
   var password = properties.getProperty("INITIAL_ADMIN_PASSWORD");
   if (!password || String(password).length < MIN_ADMIN_PASSWORD_LENGTH) {
     throw new Error("Tetapkan Script Property INITIAL_ADMIN_PASSWORD sekurang-kurangnya " + MIN_ADMIN_PASSWORD_LENGTH + " aksara.");
@@ -130,6 +133,28 @@ function setupAdminAccount() {
   properties.deleteProperty("INITIAL_ADMIN_PASSWORD");
   ensureSheets();
   return "Akaun admin dan helaian EduCafe berjaya disediakan.";
+}
+
+function bootstrapAdminAccount_() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var properties = PropertiesService.getScriptProperties();
+    var username = properties.getProperty("ADMIN_USERNAME");
+    var salt = properties.getProperty("ADMIN_PASSWORD_SALT");
+    var passwordHash = properties.getProperty("ADMIN_PASSWORD_HASH");
+    if (username && salt && passwordHash) return;
+
+    ensureSheetsUnlocked_();
+    properties.setProperties({
+      ADMIN_USERNAME: BOOTSTRAP_ADMIN_USERNAME,
+      ADMIN_PASSWORD_SALT: BOOTSTRAP_ADMIN_PASSWORD_SALT,
+      ADMIN_PASSWORD_HASH: BOOTSTRAP_ADMIN_PASSWORD_HASH,
+      SESSION_TIMEOUT_MINUTES: String(SESSION_TIMEOUT_MINUTES)
+    });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function ensureSheets() {
@@ -271,7 +296,10 @@ function handleLogin_(request) {
   var salt = properties.getProperty("ADMIN_PASSWORD_SALT");
   var expectedHash = properties.getProperty("ADMIN_PASSWORD_HASH");
   if (!expectedUsername || !salt || !expectedHash) {
-    throw new Error("Akaun admin belum disediakan. Jalankan setupAdminAccount terlebih dahulu.");
+    bootstrapAdminAccount_();
+    expectedUsername = properties.getProperty("ADMIN_USERNAME");
+    salt = properties.getProperty("ADMIN_PASSWORD_SALT");
+    expectedHash = properties.getProperty("ADMIN_PASSWORD_HASH");
   }
 
   var cache = CacheService.getScriptCache();
