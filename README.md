@@ -12,18 +12,40 @@ Sistem Pengurusan Pusat Sumber EduCafe @ D'Sutra untuk **Sekolah Kebangsaan Sung
 - Mod Demo Setempat menggunakan **localStorage** apabila Google Sheets belum dikonfigurasi.
 - PWA dengan cache asas, paparan standalone dan aliran pemasangan.
 
+## Kemas kini 11 September 2026
+
+- Grafik sudut bacaan baharu, enam warna modul dan header lebih besar. Butang admin telefon menggunakan satu baris penuh dengan ketinggian minimum 52 piksel.
+- Maklum balas nama pengguna/kata laluan salah atau betul, butang tunjuk/sembunyikan kata laluan, serta mesej ralat rangkaian yang berasingan.
+- Sesi admin dibuka selepas pengesahan; rekod dimuatkan selepas itu dengan keadaan menunggu dan butang cuba semula.
+- Apps Script memformat helaian hanya ketika dicipta atau header dibaiki. Log masuk hanya menyediakan helaian audit, dan bacaan header dikongsi dalam permintaan yang sama.
+- Ikon PWA buku terbuka, ikon maskable Android dan ikon skrin utama Apple.
+- Font, ikon, carta dan PDF disimpan bersama projek. Carta/PDF dimuatkan apabila diperlukan. Cache PWA versi v4.
+
+### Pasang kemas kini pada sistem sedia ada
+
+1. Ekstrak ZIP dan gantikan fail di root repository GitHub, termasuk folder **assets**.
+2. Gantikan kandungan **Code.gs** dalam projek Apps Script dengan versi baharu. Akaun admin sedia ada tidak ditukar.
+3. Pilih **Deploy > Manage deployments > Edit > New version > Deploy**, dengan **Execute as: Me** dan akses **Anyone**. Gunakan deployment sedia ada supaya URL `/exec` kekal sama.
+4. Jika anda mencipta deployment baharu dengan URL berbeza, kemas kini `APPS_SCRIPT_WEB_APP_URL` dalam **config.js**.
+5. Tunggu GitHub Pages siap diterbitkan, kemudian muat semula laman. Muat semula sekali lagi selepas kemas kini PWA pertama jika masih melihat reka bentuk lama.
+6. Ikon pada skrin utama tertakluk kepada cache sistem operasi. Pada iPhone, pemasangan semula pintasan mungkin diperlukan untuk melihat ikon baharu; hantar draf yang belum disimpan terlebih dahulu.
+
+Pengoptimuman pada pelayan hanya berkuat kuasa selepas **Code.gs** baharu dideploy. Tempoh sebenar masih bergantung pada rangkaian dan masa permulaan Google Apps Script.
+
 ## Struktur fail
 
 | Fail | Tujuan |
 | --- | --- |
-| **index.html** | Titik masuk aplikasi dan pustaka CDN |
+| **index.html** | Titik masuk aplikasi |
 | **styles.css** | Reka bentuk responsif, animasi dan keadaan UI |
 | **app.js** | Borang, mod demo, admin, carta, PDF dan PWA |
 | **config.js** | ID Google Sheet, URL Web App dan tetapan aplikasi |
 | **Code.gs** | API Google Apps Script, keselamatan dan operasi Sheets |
 | **manifest.json** | Metadata PWA |
 | **service-worker.js** | Cache fail statik dan fallback luar talian |
-| **assets/icon.svg**, **assets/icon-192.png**, **assets/icon-512.png** | Ikon aplikasi |
+| **assets/library-*.png** | Ikon PWA, maskable, favicon dan Apple |
+| **assets/library-welcome.webp** | Grafik perpustakaan |
+| **assets/vendor/**, **assets/fonts/** | Pustaka dan font setempat bersama lesen |
 
 ## 1. Cipta Google Sheet
 
@@ -147,7 +169,7 @@ PWA memerlukan HTTPS, kecuali localhost. Cache asas menyimpan fail aplikasi supa
 ## Akaun dan keselamatan
 
 - Nama pengguna produksi: gurucemerlang.
-- Kata laluan produksi hanya ditetapkan melalui INITIAL_ADMIN_PASSWORD dalam Script Properties.
+- Akaun awal menggunakan hash bootstrap pelayan; kata laluan tersuai ditetapkan melalui INITIAL_ADMIN_PASSWORD dalam Script Properties.
 - Token sesi disimpan dalam sessionStorage, tamat selepas tempoh tidak aktif dan tidak dimasukkan ke URL.
 - Operasi baca, kemas kini, padam, pemulangan dan laporan data memerlukan sesi admin.
 - Nilai yang boleh menjadi formula Sheet dinyahaktifkan di pelayan dan semua output pengguna di-escape sebelum dipaparkan.
@@ -155,13 +177,13 @@ PWA memerlukan HTTPS, kecuali localhost. Cache asas menyimpan fail aplikasi supa
 
 ## Laporan PDF
 
-PDF menggunakan jsPDF dan jsPDF-AutoTable melalui CDN. Lencana sekolah dimuatkan daripada URL konfigurasi dan ditukar kepada data imej; logo SKST dijana sebagai fallback jika URL luar gagal. Jadual panjang dipecah kepada beberapa bahagian kolum, header diulang pada setiap halaman dan nombor halaman serta ruang tandatangan ditambah.
+PDF menggunakan jsPDF dan jsPDF-AutoTable setempat yang dimuatkan ketika laporan dijana. Lencana sekolah dimuatkan daripada URL konfigurasi dan ditukar kepada data imej; logo SKST dijana sebagai fallback jika URL luar gagal. Jadual panjang dipecah kepada beberapa bahagian kolum, header diulang pada setiap halaman dan nombor halaman serta ruang tandatangan ditambah.
 
 ## Penyelesaian masalah ringkas
 
 - **Masih dalam Mod Demo:** semak kedua-dua nilai dalam config.js dan pastikan URL bermula dengan https://script.google.com/.
 - **Log masuk gagal:** pastikan deployment menggunakan versi kod terkini. Untuk akaun tersuai, jalankan setupAdminAccount selepas menetapkan Script Properties.
 - **API tidak berubah selepas kemas kini:** deploy versi Web App baharu dan gunakan URL /exec.
-- **Carta/PDF tidak muncul:** semak internet atau polisi rangkaian kerana pustaka dimuatkan melalui CDN.
+- **Carta/PDF tidak muncul:** pastikan semua fail dalam assets/vendor turut dimuat naik ke GitHub. Cuba muat semula laman.
 - **Lencana gagal dimuatkan:** fallback SKST akan digunakan pada UI dan PDF.
 - **PWA tidak boleh dipasang:** gunakan HTTPS/localhost dan pastikan manifest.json serta service-worker.js boleh dicapai.

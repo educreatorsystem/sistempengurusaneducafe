@@ -231,6 +231,10 @@
     modalModule: null,
     lastSessionRefreshAt: 0
   };
+  state.loginPending = false;
+  state.recordsReady = false;
+  state.recordsLoading = null;
+  state.recordsError = "";
 
   function emptyStore() {
     return MODULE_ORDER.reduce(function (store, id) {
@@ -455,27 +459,35 @@
         action: action,
         token: state.admin && state.admin.token ? state.admin.token : ""
       }, payload || {});
+      const controller = new AbortController();
+      const timeout = window.setTimeout(function () { controller.abort(); }, 25000);
       try {
         const response = await fetch(CONFIG.APPS_SCRIPT_WEB_APP_URL, {
           method: "POST",
           body: JSON.stringify(body),
-          redirect: "follow"
+          redirect: "follow",
+          signal: controller.signal
         });
         if (!response.ok) throw new Error("Pelayan membalas kod " + response.status + ".");
         const result = await response.json();
         if (!result || result.success !== true) {
           const apiError = new Error(result && result.message ? result.message : "Respons API tidak sah.");
           apiError.isApiError = true;
+          apiError.code = result && result.error && result.error.code || "API_ERROR";
           throw apiError;
         }
         return result.data;
       } catch (error) {
-        if (!attempt && !error.isApiError) {
+        if (!attempt && !error.isApiError && error.name !== "AbortError" && action !== "login") {
           await delay(650);
           return this.request(action, payload, 1);
         }
         if (error.isApiError) throw error;
-        throw new Error("Sambungan Google Sheets gagal. " + error.message);
+        throw new Error(error.name === "AbortError"
+          ? "Pelayan mengambil masa terlalu lama. Semak internet dan cuba semula."
+          : "Sambungan Google Sheets gagal. Semak internet dan cuba semula.");
+      } finally {
+        window.clearTimeout(timeout);
       }
     },
 
@@ -492,7 +504,9 @@
 
     getAll: async function () {
       if (isConfigured()) {
+        const token = state.admin && state.admin.token;
         const data = await this.request("getAllRecords", {});
+        if (!state.admin || state.admin.token !== token) return state.records;
         state.records = emptyStore();
         MODULE_ORDER.forEach(function (id) {
           state.records[id] = Array.isArray(data[id]) ? data[id] : [];
@@ -501,6 +515,8 @@
         state.records = loadLocalStore();
       }
       recalculateStatuses();
+      state.recordsReady = true;
+      state.recordsError = "";
       return state.records;
     },
 
@@ -561,13 +577,7 @@
 
     verify: async function (token) {
       if (!isConfigured()) return Boolean(token && token.indexOf("DEMO-") === 0);
-      const previous = state.admin;
-      state.admin = { token: token };
-      try {
-        return await this.request("verifySession", {});
-      } finally {
-        state.admin = previous;
-      }
+      return this.request("verifySession", { token: token });
     },
 
     logout: async function () {
@@ -585,6 +595,23 @@
     return new Promise(function (resolve) {
       window.setTimeout(resolve, milliseconds);
     });
+  }
+
+  const scriptLoads = {};
+  function loadLibrary(path) {
+    if (scriptLoads[path]) return scriptLoads[path];
+    scriptLoads[path] = new Promise(function (resolve, reject) {
+      const script = document.createElement("script");
+      script.src = path;
+      script.onload = resolve;
+      script.onerror = function () {
+        delete scriptLoads[path];
+        script.remove();
+        reject(new Error("Fail sokongan tidak dapat dimuatkan. Sila cuba semula."));
+      };
+      document.head.appendChild(script);
+    });
+    return scriptLoads[path];
   }
 
   function checkLocalBasketConflict(moduleId, record, ignoreId) {
@@ -670,6 +697,7 @@
     if (isConfigured() && Date.now() - state.lastSessionRefreshAt > 5 * 60 * 1000) {
       state.lastSessionRefreshAt = Date.now();
       DataService.request("verifySession", {}).then(function (session) {
+        if (!state.admin) return;
         if (session && session.expiresAt) state.admin.expiresAt = session.expiresAt;
         persistSession(state.admin);
       }).catch(function (error) {
@@ -679,12 +707,17 @@
   }
 
   async function logoutAdmin(expired) {
-    await DataService.logout();
+    const logout = DataService.logout();
     state.admin = null;
+    state.records = emptyStore();
+    state.recordsReady = false;
+    state.recordsError = "";
+    state.recordsLoading = null;
     persistSession(null);
     window.clearTimeout(state.inactivityTimer);
     location.hash = "#home";
     toast(expired ? "Sesi admin tamat kerana tidak aktif." : "Anda telah log keluar.", expired ? "warning" : "success");
+    await logout;
   }
 
   function badgeMarkup(sizeClass) {
@@ -711,7 +744,7 @@
       '<div class="header-actions">',
       state.admin
         ? '<button class="btn btn-ghost" type="button" data-action="admin-dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</button><button class="btn btn-gold" type="button" data-action="logout"><i data-lucide="log-out"></i> Log Keluar</button>'
-        : '<button class="btn btn-ghost" type="button" data-action="login"><i data-lucide="shield-check"></i> Log Masuk Admin</button>',
+        : '<button class="btn btn-gold admin-login-button" type="button" data-action="login"><i data-lucide="shield-check"></i> Log Masuk Admin</button>',
       "</div>",
       "</div>",
       "</header>"
@@ -740,7 +773,7 @@
       const source = MODULES[item.id] || item;
       return [
         '<button type="button" class="module-card" data-action="open-module" data-module="', item.id, '">',
-        '<span class="module-card__icon"><i data-lucide="', source.icon, '"></i></span>',
+        '<span class="module-card__top"><span class="module-card__icon"><i data-lucide="', source.icon, '"></i></span><i class="module-watermark" data-lucide="', source.icon, '" aria-hidden="true"></i></span>',
         "<span>",
         "<h4>", escapeHtml(source.title), "</h4>",
         "<p>", escapeHtml(source.description), "</p>",
@@ -751,25 +784,22 @@
     }).join("");
     app.innerHTML = [
       headerMarkup(),
-      '<main class="main-wrap">',
+      '<main class="main-wrap home-page">',
       notice,
       '<section class="hero-section">',
+      '<img class="welcome-art" src="assets/library-welcome.webp" alt="" width="1200" height="800" fetchpriority="high">',
       '<div class="hero-copy">',
-      '<span class="status-pill status-dipulangkan">Selamat datang ke EduCafe</span>',
-      "<h2>Pusat ilmu yang tersusun, mudah dicapai dan sentiasa hidup.</h2>",
-      "<p>Rekod penggunaan pusat sumber, pinjaman bahan dan resensi murid melalui satu sistem yang mesra pengguna. Pilih modul untuk mula menghantar rekod.</p>",
+      '<span class="welcome-label"><i data-lucide="sun" aria-hidden="true"></i> Selamat datang ke pusat sumber</span>',
+      "<h2>EduCafe @ D&apos;Sutra</h2>",
+      "<p>Ruang membaca, mencipta dan berkongsi ilmu.</p>",
       '<div class="hero-actions">',
       '<button class="btn btn-primary" type="button" data-action="scroll-modules"><i data-lucide="clipboard-pen-line"></i> Isi Rekod</button>',
       '<button class="btn btn-outline" type="button" data-action="login"><i data-lucide="shield-check"></i> Log Masuk Admin</button>',
       "</div>",
       "</div>",
-      '<div class="hero-panel" aria-label="Ilustrasi sudut bacaan EduCafe">',
-      '<div class="hero-illustration"><div class="reading-lamp"><span class="lamp-shade"></span><span class="lamp-glow"></span><span class="lamp-stand"></span><span class="lamp-base"></span></div><span class="coffee-cup"></span><div class="book-shelf"><span class="book"></span><span class="book"></span><span class="book"></span><span class="book"></span></div><span class="shelf-line"></span></div>',
-      '<div class="panel-badge">', badgeMarkup(), '<p><strong>', escapeHtml(CONFIG.SCHOOL_NAME || ""), "</strong><br>Budaya membaca, merekod dan berkongsi ilmu.</p></div>",
-      "</div>",
       "</section>",
       '<section id="modulUtama">',
-      '<div class="section-heading"><div><h3>Enam modul utama</h3><p>Rekod dihantar terus ke pangkalan data apabila sambungan dikonfigurasi.</p></div></div>',
+      '<div class="section-heading"><div><h3>Rekod pusat sumber</h3><p>Penggunaan, pinjaman dan resensi buku.</p></div><span class="module-count">6 modul</span></div>',
       '<div class="module-grid">', moduleCards, "</div>",
       "</section>",
       '<section><div class="section-heading"><div><h3>Satu aliran kerja yang jelas</h3><p>Direka untuk kegunaan harian guru, murid dan pentadbir pusat sumber.</p></div></div>',
@@ -952,16 +982,17 @@
     const loginControls = isConfigured()
       ? [
           '<form id="loginForm" novalidate>',
-          '<div class="field"><label for="adminUsername">Nama pengguna <span class="required-dot">*</span></label><input id="adminUsername" name="username" autocomplete="username" required><span class="field-error" data-error-for="username"></span></div>',
-          '<div class="field" style="margin-top:1rem"><label for="adminPassword">Kata laluan <span class="required-dot">*</span></label><input id="adminPassword" name="password" type="password" autocomplete="current-password" required><span class="field-error" data-error-for="password"></span></div>',
-          '<div class="form-actions"><button class="btn btn-primary" type="submit" data-action="submit-login"><i data-lucide="log-in"></i> Log Masuk</button></div>',
+          '<div class="field"><label for="adminUsername">Nama pengguna <span class="required-dot">*</span></label><input id="adminUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required><span class="field-error" data-error-for="username"></span></div>',
+          '<div class="field" style="margin-top:1rem"><label for="adminPassword">Kata laluan <span class="required-dot">*</span></label><div class="password-control"><input id="adminPassword" name="password" type="password" autocomplete="current-password" aria-describedby="loginFeedback" required><button type="button" class="password-toggle" data-action="toggle-password" aria-label="Tunjukkan kata laluan" title="Tunjukkan kata laluan" aria-pressed="false"><i data-lucide="eye"></i></button></div><span class="field-error" data-error-for="password"></span></div>',
+          '<div id="loginFeedback" class="login-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>',
+          '<div class="form-actions"><button class="btn btn-primary" type="submit" data-action="submit-login"><i data-lucide="log-in"></i> Log Masuk Admin</button></div>',
           "</form>"
         ].join("")
       : '<button class="btn btn-primary" type="button" data-action="demo-login" style="width:100%"><i data-lucide="flask-conical"></i> Masuk Admin Demo Setempat</button>';
     app.innerHTML = [
       headerMarkup(),
       '<main class="login-page"><div class="main-wrap login-layout">',
-      '<section class="login-copy"><span class="status-pill status-dipulangkan">Akses terhad</span><h2>Ruang pentadbiran Pusat Sumber EduCafe.</h2><p>Dashboard admin menyatukan carian rekod, pengurusan pemulangan, analisis, carta dan laporan PDF. Sesi tamat secara automatik selepas tempoh tidak aktif.</p></section>',
+      '<section class="login-copy"><span class="welcome-label"><i data-lucide="library"></i> EduCafe @ D\'Sutra</span><h2>Selamat kembali, warga pendidik.</h2><img class="login-art" src="assets/library-welcome.webp" width="1200" height="800" alt="Sudut bacaan dengan buku dan rak perpustakaan berwarna-warni"></section>',
       '<section class="login-card">',
       '<div class="login-card__head">', badgeMarkup(), '<div><h3>Log Masuk Admin</h3><p>', escapeHtml(CONFIG.SCHOOL_NAME || ""), "</p></div></div>",
       modeNotice,
@@ -1222,7 +1253,13 @@
     return escapeHtml(value);
   }
 
-  function renderCharts() {
+  async function renderCharts() {
+    try {
+      if (!window.Chart) await loadLibrary("assets/vendor/chart-4.4.7.min.js");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    if (!state.admin || !document.getElementById("chartUsageMonth")) return;
     state.charts.forEach(function (chart) { chart.destroy(); });
     state.charts = [];
     if (!window.Chart) {
@@ -1413,7 +1450,7 @@
   function setFieldError(form, key, message) {
     const control = form.elements[key];
     const error = form.querySelector('[data-error-for="' + key + '"]');
-    if (control) control.setAttribute("aria-invalid", "true");
+    if (control) control.setAttribute("aria-invalid", message ? "true" : "false");
     if (error) error.textContent = message;
   }
 
@@ -1460,19 +1497,42 @@
     }
   }
 
+  function showLoginFeedback(form, message, type) {
+    const feedback = form.querySelector("#loginFeedback");
+    if (!feedback) return;
+    feedback.hidden = !message;
+    feedback.className = "login-feedback " + (type || "");
+    feedback.textContent = message;
+  }
+
   async function handleLoginSubmit(form) {
-    if (state.submitting) return;
+    if (state.loginPending) return;
     const values = Object.fromEntries(new FormData(form).entries());
+    values.username = String(values.username || "").trim();
+    setFieldError(form, "username", "");
+    setFieldError(form, "password", "");
     if (!values.username || !values.password) {
       if (!values.username) setFieldError(form, "username", "Nama pengguna diperlukan.");
       if (!values.password) setFieldError(form, "password", "Kata laluan diperlukan.");
       return;
     }
-    state.submitting = true;
+    state.loginPending = true;
     const button = form.querySelector('[type="submit"]');
-    if (button) button.disabled = true;
+    const originalButton = button && button.innerHTML;
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = '<i data-lucide="loader-circle" class="loading-spin"></i> Menyemak...';
+    }
+    form.setAttribute("aria-busy", "true");
+    showLoginFeedback(form, "Menyemak nama pengguna dan kata laluan...", "pending");
+    postRender();
     try {
       const result = await DataService.login(values.username, values.password);
+      if (!result || !result.token) throw new Error("Respons log masuk tidak lengkap. Cuba semula.");
+      if (!form.isConnected) {
+        await DataService.request("logout", { token: result.token });
+        return;
+      }
       const timeout = Number(CONFIG.SESSION_TIMEOUT_MINUTES || 30) * 60 * 1000;
       state.admin = {
         token: result.token,
@@ -1482,16 +1542,35 @@
       state.lastSessionRefreshAt = Date.now();
       persistSession(state.admin);
       resetInactivityTimer();
-      renderLoading("Menyediakan dashboard...");
-      await DataService.getAll();
+      state.recordsReady = false;
+      state.recordsError = "";
+      state.records = emptyStore();
+      form.elements.password.value = "";
+      showLoginFeedback(form, "Nama pengguna dan kata laluan betul. Log masuk berjaya.", "success");
+      toast("Nama pengguna dan kata laluan betul. Log masuk berjaya.", "success");
       location.hash = "#admin/dashboard";
-      toast("Log masuk admin berjaya.", "success");
     } catch (error) {
-      setFieldError(form, "password", error.message || "Log masuk gagal.");
-      toast("Log masuk gagal. Semak nama pengguna dan kata laluan.", "error");
-      if (button) button.disabled = false;
+      if (!form.isConnected) return;
+      const invalidCredentials = error.code === "INVALID_CREDENTIALS" || /Nama pengguna atau kata laluan (tidak sah|salah)/i.test(error.message);
+      const message = invalidCredentials
+        ? "Nama pengguna atau kata laluan salah. Sila semak dan cuba semula."
+        : error.message || "Log masuk gagal. Sila cuba semula.";
+      showLoginFeedback(form, message, "error");
+      if (invalidCredentials) {
+        form.elements.password.setAttribute("aria-invalid", "true");
+        form.elements.password.focus();
+      }
+      toast(message, "error");
     } finally {
-      state.submitting = false;
+      state.loginPending = false;
+      if (form.isConnected) {
+        form.removeAttribute("aria-busy");
+        if (button) {
+          button.disabled = false;
+          button.innerHTML = originalButton;
+        }
+        postRender();
+      }
     }
   }
 
@@ -1751,6 +1830,9 @@
   }
 
   async function generatePdf(moduleId, period) {
+    if (!requireAdmin() || !state.recordsReady) throw new Error("Sila tunggu rekod admin dimuatkan.");
+    if (!window.jspdf) await loadLibrary("assets/vendor/jspdf-2.5.2.min.js");
+    await loadLibrary("assets/vendor/jspdf-autotable-3.8.4.min.js");
     if (!window.jspdf || !window.jspdf.jsPDF) {
       throw new Error("Pustaka PDF tidak dapat dimuatkan. Semak sambungan internet dan cuba semula.");
     }
@@ -2037,6 +2119,19 @@
       }
     }
     if (action === "demo-login") await loginDemo();
+    if (action === "toggle-password") {
+      const password = document.getElementById("adminPassword");
+      if (password) {
+        const visible = password.type === "password";
+        password.type = visible ? "text" : "password";
+        const label = visible ? "Sembunyikan kata laluan" : "Tunjukkan kata laluan";
+        target.setAttribute("aria-label", label);
+        target.setAttribute("title", label);
+        target.setAttribute("aria-pressed", String(visible));
+        target.innerHTML = '<i data-lucide="' + (visible ? "eye-off" : "eye") + '"></i>';
+        postRender();
+      }
+    }
     if (action === "refresh-admin") await refreshAdminData();
     if (action === "pdf") showPdfModal(target.dataset.module);
     if (action === "admin-modules-menu") showAdminModulesMenu();
@@ -2061,6 +2156,11 @@
   }
 
   function handleInput(event) {
+    const loginForm = event.target.closest("#loginForm");
+    if (loginForm && !state.loginPending) {
+      showLoginFeedback(loginForm, "", "");
+      loginForm.elements.password.removeAttribute("aria-invalid");
+    }
     const form = event.target.closest("#recordForm");
     if (!form) return;
     const counter = form.querySelector('[data-counter-for="' + event.target.name + '"]');
@@ -2081,16 +2181,40 @@
     }
   }
 
+  function renderAdminDataState() {
+    const message = state.recordsError;
+    app.innerHTML = adminShellMarkup("dashboard", "Dashboard Analisis", "Log masuk disahkan. Selamat datang, " + state.admin.username + ".",
+      '<section class="admin-data-state" role="status" aria-live="polite" aria-busy="' + (!message) + '">' +
+      '<i data-lucide="' + (message ? 'cloud-off' : 'loader-circle') + '" class="' + (message ? '' : 'loading-spin') + '"></i>' +
+      '<h3>' + (message ? 'Rekod belum dapat dimuatkan' : 'Memuatkan rekod pusat sumber') + '</h3>' +
+      '<p>' + escapeHtml(message || "Kata laluan betul. Sesi admin anda telah aktif.") + '</p>' +
+      (message ? '<button class="btn btn-primary" data-action="refresh-admin" type="button"><i data-lucide="refresh-cw"></i> Cuba Semula</button>' : '<div class="data-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>') + '</section>', "");
+    postRender();
+  }
+
+  function loadAdminData() {
+    if (state.recordsLoading) return state.recordsLoading;
+    const token = state.admin && state.admin.token;
+    if (!token) return Promise.resolve();
+    state.recordsError = "";
+    const pending = DataService.getAll().catch(function (error) {
+      if (state.admin && state.admin.token === token) state.recordsError = error.message;
+    }).finally(function () {
+      if (state.recordsLoading !== pending) return;
+      state.recordsLoading = null;
+      if (state.admin && state.admin.token === token && location.hash.indexOf("#admin/") === 0) route();
+    });
+    state.recordsLoading = pending;
+    return pending;
+  }
+
   async function refreshAdminData() {
-    renderLoading("Menyegerakkan rekod...");
-    try {
-      await DataService.getAll();
-      renderAdminDashboard();
-      toast("Data berjaya disegar semula.", "success");
-    } catch (error) {
-      renderAdminDashboard();
-      toast(error.message || "Data gagal disegar semula.", "error");
-    }
+    if (!requireAdmin()) return;
+    state.recordsReady = false;
+    state.recordsError = "";
+    const pending = loadAdminData();
+    renderAdminDataState();
+    await pending;
   }
 
   function toast(message, type) {
@@ -2121,7 +2245,17 @@
 
   async function route() {
     closeModal();
+    state.charts.forEach(function (chart) { chart.destroy(); });
+    state.charts = [];
     const path = (location.hash || "#home").replace(/^#/, "").split("/").filter(Boolean);
+    if (path[0] === "admin") {
+      if (!requireAdmin()) return;
+      if (!state.recordsReady) {
+        renderAdminDataState();
+        if (!state.recordsError) loadAdminData();
+        return;
+      }
+    }
     if (!path.length || path[0] === "home") return renderHome();
     if (path[0] === "basket") return renderBasketChoice();
     if (path[0] === "login") return renderLogin();
@@ -2160,7 +2294,6 @@
     try {
       await DataService.init();
       await restoreSession();
-      if (state.admin) await DataService.getAll();
       await route();
     } catch (error) {
       state.admin = null;

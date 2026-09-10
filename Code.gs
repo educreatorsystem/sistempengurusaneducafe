@@ -8,6 +8,8 @@ var GOOGLE_SHEET_ID = "1T2mYQNl3ogtALF7fwqJqsAQAk7uwLO3Uz6_ZsODZAtI";
 var SESSION_TIMEOUT_MINUTES = 30;
 var MAX_LOGIN_ATTEMPTS = 5;
 var MIN_ADMIN_PASSWORD_LENGTH = 7;
+var requestSpreadsheet_ = null;
+var requestHeaders_ = {};
 var BOOTSTRAP_ADMIN_USERNAME = "gurucemerlang";
 var BOOTSTRAP_ADMIN_PASSWORD_SALT = "65d64fa9f6e48c069176a020bb0772a7287004fdd8684e09ad77ca5baec497f4";
 var BOOTSTRAP_ADMIN_PASSWORD_HASH = "f4b4ad180a6647273167d9e139d05e4d83593a8b7690d638532835594bdfdf3c";
@@ -170,18 +172,29 @@ function ensureSheets() {
 function ensureSheetsUnlocked_() {
   var spreadsheet = getSpreadsheet_();
   Object.keys(SHEET_DEFINITIONS).forEach(function (name) {
-    var sheet = spreadsheet.getSheetByName(name);
-    if (!sheet) sheet = spreadsheet.insertSheet(name);
-    ensureHeaders_(sheet, BASE_HEADERS.concat(SHEET_DEFINITIONS[name]));
+    ensureModuleSheet_(spreadsheet, name);
+  });
+  if (spreadsheet.getSpreadsheetTimeZone() !== "Asia/Kuala_Lumpur") {
+    spreadsheet.setSpreadsheetTimeZone("Asia/Kuala_Lumpur");
+  }
+  return true;
+}
+
+function ensureModuleSheet_(spreadsheet, name) {
+  var sheet = spreadsheet.getSheetByName(name);
+  var created = !sheet;
+  if (created) sheet = spreadsheet.insertSheet(name);
+  var changed = ensureHeaders_(sheet, BASE_HEADERS.concat(SHEET_DEFINITIONS[name]));
+  // Format only new or repaired headers, never every login or record read.
+  if (created || changed) {
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, sheet.getLastColumn())
       .setBackground("#0F766E")
       .setFontColor("#FFFFFF")
       .setFontWeight("bold");
     sheet.autoResizeColumns(1, Math.min(sheet.getLastColumn(), 12));
-  });
-  spreadsheet.setSpreadsheetTimeZone("Asia/Kuala_Lumpur");
-  return true;
+  }
+  return sheet;
 }
 
 function doGet() {
@@ -220,6 +233,7 @@ function doPost(e) {
     throw new Error("Tindakan API tidak disokong: " + action);
   } catch (error) {
     return jsonResponse_(false, error.message || "Ralat pelayan tidak diketahui.", null, {
+      code: error.code || "API_ERROR",
       name: error.name || "Error"
     });
   }
@@ -251,13 +265,15 @@ function jsonResponse_(success, message, data, error) {
 }
 
 function getSpreadsheet_() {
+  if (requestSpreadsheet_) return requestSpreadsheet_;
   var properties = PropertiesService.getScriptProperties();
   var sheetId = String(properties.getProperty("GOOGLE_SHEET_ID") || GOOGLE_SHEET_ID || "").trim();
   if (!sheetId || sheetId.indexOf("MASUKKAN_ID") !== -1) {
     throw new Error("GOOGLE_SHEET_ID belum dikonfigurasi dalam Script Properties atau Code.gs.");
   }
   try {
-    return SpreadsheetApp.openById(sheetId);
+    requestSpreadsheet_ = SpreadsheetApp.openById(sheetId);
+    return requestSpreadsheet_;
   } catch (error) {
     throw new Error("Google Sheet tidak dapat dibuka. Semak ID dan kebenaran akses.");
   }
@@ -266,16 +282,19 @@ function getSpreadsheet_() {
 function ensureHeaders_(sheet, expected) {
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, expected.length).setValues([expected]);
-    return;
+    requestHeaders_[sheet.getName()] = expected.slice();
+    return true;
   }
   var lastColumn = Math.max(sheet.getLastColumn(), 1);
-  var current = sheet.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  var current = getHeaders_(sheet);
   var missing = expected.filter(function (header) {
     return current.indexOf(header) === -1;
   });
   if (missing.length) {
     sheet.getRange(1, lastColumn + 1, 1, missing.length).setValues([missing]);
+    requestHeaders_[sheet.getName()] = current.concat(missing);
   }
+  return missing.length > 0;
 }
 
 function validateModule_(module) {
@@ -313,10 +332,15 @@ function handleLogin_(request) {
   if (!valid) {
     cache.put(attemptKey, String(attempts + 1), 600);
     Utilities.sleep(250);
-    throw new Error("Nama pengguna atau kata laluan tidak sah.");
+    var credentialsError = new Error("Nama pengguna atau kata laluan salah. Sila cuba semula.");
+    credentialsError.code = "INVALID_CREDENTIALS";
+    throw credentialsError;
   }
   cache.remove(attemptKey);
-  cleanExpiredSessions_();
+  if (!cache.get("SESSION_CLEANUP_DONE")) {
+    cleanExpiredSessions_();
+    cache.put("SESSION_CLEANUP_DONE", "1", 3600);
+  }
 
   var token = Utilities.getUuid() + Utilities.getUuid() + String(new Date().getTime());
   var now = new Date().getTime();
@@ -390,7 +414,7 @@ function cleanExpiredSessions_() {
   var all = properties.getProperties();
   var now = new Date().getTime();
   Object.keys(all).forEach(function (key) {
-    if (key.indexOf("SESSION_") !== 0) return;
+    if (!/^SESSION_[a-f0-9]{48}$/.test(key)) return;
     try {
       if (Number(JSON.parse(all[key]).expiresAt || 0) <= now) properties.deleteProperty(key);
     } catch (error) {
@@ -686,8 +710,11 @@ function generateServerId_(module) {
 }
 
 function getHeaders_(sheet) {
+  if (sheet && requestHeaders_[sheet.getName()]) return requestHeaders_[sheet.getName()];
   if (!sheet || sheet.getLastColumn() < 1) return [];
-  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  requestHeaders_[sheet.getName()] = headers;
+  return headers;
 }
 
 function appendRecord_(sheet, module, record) {
@@ -778,8 +805,9 @@ function logActivity_(action, recordId, details, username) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    ensureSheetsUnlocked_();
-    logActivityUnlocked_(getSpreadsheet_(), action, recordId, details, username);
+    var spreadsheet = getSpreadsheet_();
+    ensureModuleSheet_(spreadsheet, "LOG_AKTIVITI");
+    logActivityUnlocked_(spreadsheet, action, recordId, details, username);
   } finally {
     lock.releaseLock();
   }
