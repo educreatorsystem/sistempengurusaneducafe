@@ -7,6 +7,7 @@
 var GOOGLE_SHEET_ID = "1T2mYQNl3ogtALF7fwqJqsAQAk7uwLO3Uz6_ZsODZAtI";
 var SESSION_TIMEOUT_MINUTES = 30;
 var MAX_LOGIN_ATTEMPTS = 5;
+var MIN_ADMIN_PASSWORD_LENGTH = 7;
 
 var BASE_HEADERS = [
   "id",
@@ -116,8 +117,8 @@ function setupAdminAccount() {
   var properties = PropertiesService.getScriptProperties();
   var username = String(properties.getProperty("INITIAL_ADMIN_USERNAME") || "gurucemerlang").trim();
   var password = properties.getProperty("INITIAL_ADMIN_PASSWORD");
-  if (!password || String(password).length < 8) {
-    throw new Error("Tetapkan Script Property INITIAL_ADMIN_PASSWORD sekurang-kurangnya 8 aksara.");
+  if (!password || String(password).length < MIN_ADMIN_PASSWORD_LENGTH) {
+    throw new Error("Tetapkan Script Property INITIAL_ADMIN_PASSWORD sekurang-kurangnya " + MIN_ADMIN_PASSWORD_LENGTH + " aksara.");
   }
   var salt = Utilities.getUuid() + Utilities.getUuid();
   properties.setProperties({
