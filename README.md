@@ -5,14 +5,36 @@ Sistem Pengurusan Pusat Sumber EduCafe @ D'Sutra untuk **Sekolah Kebangsaan Sung
 ## Fungsi utama
 
 - Mod pengguna untuk menghantar rekod tanpa melihat pangkalan data.
-- Tujuh set data dalam enam modul: penggunaan PSS, kamus, resensi Tahap 2, buku guru, buku murid, Bakul NILAM BM dan Bakul NILAM BI.
+- Lapan set data dalam enam modul: penggunaan PSS, kamus, resensi Tahap 1 dan Tahap 2, buku guru, buku murid, Bakul NILAM BM dan Bakul NILAM BI.
 - Mod admin dengan sesi bertempoh, carian, penapis, susunan, pagination, lihat, edit, pemulangan dan padam dua langkah.
-- Dashboard dengan 11 metrik dan enam carta analisis.
+- Dashboard dengan 12 metrik dan enam carta analisis.
 - PDF harian, mingguan, bulanan, tahunan dan Rumusan Keseluruhan.
 - Mod Demo Setempat menggunakan **localStorage** apabila Google Sheets belum dikonfigurasi.
 - PWA dengan cache asas, paparan standalone dan aliran pemasangan.
 
-## Kemas kini 11 September 2026
+## Kemas kini 7 Oktober 2026
+
+- Latar gradient mint, biru muda, merah jambu dan emas lembut. Hover kad, ikon, anak panah, medan borang dan jadual; fokus papan kekunci kekal jelas. Animasi menghormati `prefers-reduced-motion`.
+- Kad Resensi Buku membuka pilihan Tahap 1 (Tahun 1-3) atau Tahap 2 (Tahun 4-6). Kedua-duanya mempunyai borang, jadual admin, penapis, statistik dan PDF sendiri; carta serta Rumusan Keseluruhan merangkumi kedua-dua tahap.
+- Helaian baharu `RESENSI_TAHAP_1` dicipta secara automatik semasa operasi data pertama. `RESENSI_TAHAP_2`, ID RSN dan rekod lama dikekalkan. Tiada migrasi atau pemadaman rekod lama diperlukan.
+- Log masuk hanya mengesahkan hash dan menyimpan sesi serta audit tertunda dalam Script Properties. Ia tidak membuka Sheets, memformat helaian, menulis baris audit atau membersihkan sesi lama. Akaun sedia ada kekal; bootstrap akaun pertama juga tidak membuka Sheets.
+- Audit log masuk/keluar dipindahkan ke `LOG_AKTIVITI` selepas bacaan rekod admin atau penyelenggaraan. ID audit tetap mengelakkan pendua apabila dicuba semula; audit tertunda dipadam hanya selepas penulisan berjaya. Jalankan `installMaintenanceTriggers` sekali untuk pembersihan sesi dan pemindahan audit berkala walaupun dashboard tidak dibuka. Jangan padam Script Properties audit secara manual.
+- Bacaan rekod menggunakan satu bacaan julat setiap helaian. Jawapan pengesahan tidak menunggu dashboard; ralat kata laluan berbeza daripada ralat sambungan/data.
+- Permintaan login tamat menunggu selepas 15 saat, tanpa percubaan automatik. Mesej menunggu selepas 5 saat dan butang Batal disediakan. Batal menghentikan permintaan pada pelayar, bukan eksekusi Google yang sudah bermula; sesi yang tidak digunakan tetap tamat mengikut had masa.
+- Cache PWA versi v5. Health API memaparkan `version: 2026-10-07` untuk memastikan versi deploy betul.
+
+### Pasang kemas kini Oktober
+
+1. Gantikan fail laman GitHub menggunakan kandungan ZIP baharu, termasuk `app.js`, `styles.css`, `service-worker.js` dan folder `assets`. Apps Script sahaja tidak mengubah grafik laman.
+2. Gantikan seluruh kandungan `Code.gs` dalam projek Apps Script. ID Sheet dan hash akaun lalai sudah disediakan; akaun tersuai sedia ada tidak diubah.
+3. Pilih **Deploy > Manage deployments > Edit**, pilih versi baharu dan **Deploy**. Kekalkan deployment yang sama supaya URL `/exec` tidak berubah. Rujukan: [pengurusan deployment Google](https://developers.google.com/apps-script/concepts/deployments).
+4. Buka URL `/exec` dan pastikan respons JSON mengandungi `version: 2026-10-07`. Jika tiada, deployment masih menggunakan kod lama.
+5. Muat semula laman selepas GitHub Pages selesai. Tutup dan buka semula PWA jika masih melihat cache lama. Jangan kosongkan localStorage jika masih ada draf atau data demo yang diperlukan.
+6. Log masuk menggunakan akaun sedia ada. Pilihan: jalankan `ensureSheets` sekali dalam editor untuk menyediakan helaian lebih awal, dan `installMaintenanceTriggers` untuk penyelenggaraan automatik.
+
+Ujian setempat menggunakan simulasi Apps Script dan respons API; tidak menulis data ujian ke Google Sheet sebenar. Tiada jaminan bilangan saat login di produksi kerana masa permulaan Google dan rangkaian masih di luar kawalan aplikasi. Simpanan Script Properties tertakluk kepada [kuota Google Apps Script](https://developers.google.com/apps-script/guides/services/quotas); penyelenggaraan berkala disyorkan.
+
+## Kemas kini 11 September 2026 (sejarah)
 
 - Grafik sudut bacaan baharu, enam warna modul dan header lebih besar. Butang admin telefon menggunakan satu baris penuh dengan ketinggian minimum 52 piksel.
 - Maklum balas nama pengguna/kata laluan salah atau betul, butang tunjuk/sembunyikan kata laluan, serta mesej ralat rangkaian yang berasingan.
@@ -58,6 +80,7 @@ Helaian berikut akan dicipta secara automatik oleh **Code.gs**:
 
 - PENGGUNAAN_PSS
 - PINJAMAN_KAMUS
+- RESENSI_TAHAP_1
 - RESENSI_TAHAP_2
 - PINJAMAN_BUKU_GURU
 - PINJAMAN_BUKU_MURID
@@ -87,7 +110,7 @@ Nilai dalam config digunakan oleh aplikasi untuk menentukan sama ada Mod Demo pe
 
 Jangan masukkan kata laluan dalam **index.html**, **app.js**, **config.js** atau mana-mana fail klien.
 
-Akaun admin lalai telah disediakan sebagai salt dan hash SHA-256 dalam kod pelayan. Pada log masuk pertama, Apps Script akan mencipta Script Properties admin dan semua helaian secara automatik. Kata laluan teks biasa tidak disimpan dalam fail projek.
+Akaun admin lalai telah disediakan sebagai salt dan hash SHA-256 dalam kod pelayan. Pada log masuk pertama, Apps Script mencipta Script Properties admin sahaja. Semua helaian disediakan secara automatik semasa operasi data pertama, atau dengan menjalankan `ensureSheets` dalam editor. Kata laluan teks biasa tidak disimpan dalam fail projek.
 
 Untuk menukar akaun atau kata laluan kemudian:
 

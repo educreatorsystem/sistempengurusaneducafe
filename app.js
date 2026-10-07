@@ -78,6 +78,7 @@
       icon: "book-heart",
       title: "Rekod Resensi Buku Tahap 2",
       shortTitle: "Resensi Tahap 2",
+      reviewYears: [4, 5, 6],
       description: "Himpunkan resensi murid Tahun 4, Tahun 5 dan Tahun 6.",
       dateKey: "tarikh",
       classKey: "tahunKelas",
@@ -193,10 +194,20 @@
 
   MODULES.PINJAMAN_BAKUL_BM = basketModule("PINJAMAN_BAKUL_BM", "NILAM BM", "Rekod Pinjaman Bakul NILAM Bahasa Melayu");
   MODULES.PINJAMAN_BAKUL_BI = basketModule("PINJAMAN_BAKUL_BI", "NILAM BI", "Rekod Pinjaman Bakul NILAM Bahasa Inggeris");
+  MODULES.RESENSI_TAHAP_1 = Object.assign({}, MODULES.RESENSI_TAHAP_2, {
+    id: "RESENSI_TAHAP_1", prefix: "RS1", icon: "book-open",
+    title: "Rekod Resensi Buku Tahap 1", shortTitle: "Resensi Tahap 1",
+    description: "Himpunkan resensi murid Tahun 1, Tahun 2 dan Tahun 3.",
+    reviewYears: [1, 2, 3],
+    fields: MODULES.RESENSI_TAHAP_2.fields.map(function (item) {
+      return Object.assign({}, item, item.key === "tahunKelas" ? { placeholder: "Contoh: Tahun 2 Bestari" } : {});
+    })
+  });
 
   const MODULE_ORDER = [
     "PENGGUNAAN_PSS",
     "PINJAMAN_KAMUS",
+    "RESENSI_TAHAP_1",
     "RESENSI_TAHAP_2",
     "PINJAMAN_BUKU_GURU",
     "PINJAMAN_BUKU_MURID",
@@ -207,7 +218,7 @@
   const HOME_MODULES = [
     { id: "PENGGUNAAN_PSS" },
     { id: "PINJAMAN_KAMUS" },
-    { id: "RESENSI_TAHAP_2" },
+    { id: "RESENSI_BUKU", icon: "book-heart", title: "Rekod Resensi Buku", description: "Resensi bacaan murid Tahap 1 dan Tahap 2." },
     { id: "PINJAMAN_BUKU_GURU" },
     { id: "PINJAMAN_BUKU_MURID" },
     {
@@ -232,6 +243,7 @@
     lastSessionRefreshAt: 0
   };
   state.loginPending = false;
+  state.loginController = null;
   state.recordsReady = false;
   state.recordsLoading = null;
   state.recordsError = "";
@@ -370,7 +382,7 @@
     }
     if (module.basketType) record.jenisBakul = module.basketType;
     if (module.isLoan) record.statusPinjaman = effectiveStatus(record, module) || "Sedang Dipinjam";
-    if (moduleId === "RESENSI_TAHAP_2") {
+    if (MODULES[moduleId].reviewYears) {
       record.statusPengesahan = record.statusPengesahan || "Belum Disahkan";
     }
     return record;
@@ -429,6 +441,10 @@
       nilaiMurni: "Rajin membaca dan saling membantu.", penilaianBintang: "5 bintang",
       statusPengesahan: "Belum Disahkan", catatanGuru: "DATA CONTOH"
     }));
+    store.RESENSI_TAHAP_1.push(Object.assign({}, store.RESENSI_TAHAP_2[0], sampleBase("RESENSI_TAHAP_1", "001"), {
+      namaMurid: "Murid Contoh Tahap 1", tahunKelas: "Tahun 2 Bestari",
+      tajukBuku: "Mari Membaca", bilanganHalaman: 24
+    }));
     [
       ["PINJAMAN_BUKU_GURU", { tarikhPinjaman: todayIso(), namaGuru: "Guru Contoh", jawatanPanitia: "Panitia Sains", kodBuku: "BG-DEMO-01", tajukBuku: "Eksperimen Sains", namaPenulis: "Penulis Contoh", kategoriBuku: "Rujukan", kuantiti: 1, tarikhPerluDipulangkan: addDays(todayIso(), 14), keadaanBukuSemasaDipinjam: "Baik", statusPinjaman: "Sedang Dipinjam", catatan: "DATA CONTOH" }],
       ["PINJAMAN_BUKU_MURID", { tarikhPinjaman: todayIso(), namaMurid: "Murid Contoh", tahunKelas: "Tahun 5 Bestari", kodBuku: "BM-DEMO-01", tajukBuku: "Jejak Ilmu", namaPenulis: "Penulis Contoh", kategoriBuku: "Fiksyen", tarikhPerluDipulangkan: addDays(todayIso(), 7), keadaanBukuSemasaDipinjam: "Baik", statusPinjaman: "Sedang Dipinjam", catatan: "DATA CONTOH" }],
@@ -460,7 +476,9 @@
         token: state.admin && state.admin.token ? state.admin.token : ""
       }, payload || {});
       const controller = new AbortController();
-      const timeout = window.setTimeout(function () { controller.abort(); }, 25000);
+      if (action === "login") state.loginController = controller;
+      let timedOut = false;
+      const timeout = window.setTimeout(function () { timedOut = true; controller.abort(); }, action === "login" ? 15000 : 25000);
       try {
         const response = await fetch(CONFIG.APPS_SCRIPT_WEB_APP_URL, {
           method: "POST",
@@ -483,11 +501,17 @@
           return this.request(action, payload, 1);
         }
         if (error.isApiError) throw error;
+        if (error.name === "AbortError" && !timedOut) {
+          const cancelled = new Error("Log masuk dibatalkan. Anda boleh cuba semula.");
+          cancelled.code = "LOGIN_CANCELLED";
+          throw cancelled;
+        }
         throw new Error(error.name === "AbortError"
           ? "Pelayan mengambil masa terlalu lama. Semak internet dan cuba semula."
           : "Sambungan Google Sheets gagal. Semak internet dan cuba semula.");
       } finally {
         window.clearTimeout(timeout);
+        if (state.loginController === controller) state.loginController = null;
       }
     },
 
@@ -846,6 +870,18 @@
     postRender();
   }
 
+  function renderReviewChoice() {
+    app.innerHTML = [
+      headerMarkup(), '<main class="main-wrap form-page">',
+      pageToolbarMarkup("Rekod Resensi Buku", "Tahap 1 dan Tahap 2", "home"),
+      '<div class="basket-choice-grid review-choice-grid">',
+      basketChoiceMarkup("RESENSI_TAHAP_1", "book-open", "Resensi Tahap 1", "Tahun 1, Tahun 2 dan Tahun 3"),
+      basketChoiceMarkup("RESENSI_TAHAP_2", "book-heart", "Resensi Tahap 2", "Tahun 4, Tahun 5 dan Tahun 6"),
+      '</div></main>', footerMarkup()
+    ].join("");
+    postRender();
+  }
+
   function basketChoiceMarkup(moduleId, icon, title, description) {
     return [
       '<button type="button" class="basket-choice-card" data-action="open-module" data-module="', moduleId, '">',
@@ -911,7 +947,7 @@
     }).map(function (item) {
       return formFieldMarkup(item, record[item.key]);
     }).join("");
-    const backAction = state.admin ? "admin-module" : (module.basketType ? "basket-choice" : "home");
+    const backAction = state.admin ? "admin-module" : (module.basketType ? "basket-choice" : module.reviewYears ? "review-choice" : "home");
     const backData = state.admin ? ' data-module="' + moduleId + '"' : "";
     const pdfButton = state.admin
       ? '<button class="btn btn-outline" type="button" data-action="pdf" data-module="' + moduleId + '"><i data-lucide="file-down"></i> Jana Rumusan PDF</button>'
@@ -985,7 +1021,7 @@
           '<div class="field"><label for="adminUsername">Nama pengguna <span class="required-dot">*</span></label><input id="adminUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required><span class="field-error" data-error-for="username"></span></div>',
           '<div class="field" style="margin-top:1rem"><label for="adminPassword">Kata laluan <span class="required-dot">*</span></label><div class="password-control"><input id="adminPassword" name="password" type="password" autocomplete="current-password" aria-describedby="loginFeedback" required><button type="button" class="password-toggle" data-action="toggle-password" aria-label="Tunjukkan kata laluan" title="Tunjukkan kata laluan" aria-pressed="false"><i data-lucide="eye"></i></button></div><span class="field-error" data-error-for="password"></span></div>',
           '<div id="loginFeedback" class="login-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></div>',
-          '<div class="form-actions"><button class="btn btn-primary" type="submit" data-action="submit-login"><i data-lucide="log-in"></i> Log Masuk Admin</button></div>',
+          '<div class="form-actions"><button class="btn btn-muted" type="button" data-action="cancel-login" hidden><i data-lucide="x"></i> Batal</button><button class="btn btn-primary" type="submit" data-action="submit-login"><i data-lucide="log-in"></i> Log Masuk Admin</button></div>',
           "</form>"
         ].join("")
       : '<button class="btn btn-primary" type="button" data-action="demo-login" style="width:100%"><i data-lucide="flask-conical"></i> Masuk Admin Demo Setempat</button>';
@@ -1062,6 +1098,7 @@
       { label: "Penggunaan pusat sumber", value: usage.length, icon: "library" },
       { label: "Jumlah pengguna pusat sumber", value: sumBy(usage, "jumlahPengguna"), icon: "users" },
       { label: "Pinjaman kamus", value: rowsFor("PINJAMAN_KAMUS").length, icon: "languages" },
+      { label: "Resensi Tahap 1", value: rowsFor("RESENSI_TAHAP_1").length, icon: "book-open" },
       { label: "Resensi Tahap 2", value: rowsFor("RESENSI_TAHAP_2").length, icon: "book-heart" },
       { label: "Pinjaman buku guru", value: rowsFor("PINJAMAN_BUKU_GURU").length, icon: "book-open-check" },
       { label: "Pinjaman buku murid", value: rowsFor("PINJAMAN_BUKU_MURID").length, icon: "book-user" },
@@ -1094,7 +1131,7 @@
     const charts = [
       ["chartUsageMonth", "Penggunaan pusat sumber mengikut bulan"],
       ["chartUsageClass", "Penggunaan mengikut kelas"],
-      ["chartReviewsYear", "Resensi Tahun 4, Tahun 5 dan Tahun 6"],
+      ["chartReviewsYear", "Resensi Tahap 1 dan Tahap 2 mengikut tahun"],
       ["chartLoansCategory", "Pinjaman mengikut kategori"],
       ["chartBaskets", "Bakul NILAM BM berbanding BI"],
       ["chartLoanStatus", "Status pinjaman aktif, dipulangkan dan lewat"]
@@ -1128,6 +1165,7 @@
     PENGGUNAAN_PSS: ["tarikh", "namaGuruPegawai", "kelasUnitKumpulan", "jumlahPengguna", "tujuanPenggunaan"],
     PINJAMAN_KAMUS: ["tarikhPinjaman", "namaPeminjam", "kelasJawatan", "bahasaKamus", "tarikhPerluDipulangkan"],
     RESENSI_TAHAP_2: ["tarikh", "namaMurid", "tahunKelas", "tajukBuku", "penilaianBintang"],
+    RESENSI_TAHAP_1: ["tarikh", "namaMurid", "tahunKelas", "tajukBuku", "penilaianBintang"],
     PINJAMAN_BUKU_GURU: ["tarikhPinjaman", "namaGuru", "jawatanPanitia", "tajukBuku", "tarikhPerluDipulangkan"],
     PINJAMAN_BUKU_MURID: ["tarikhPinjaman", "namaMurid", "tahunKelas", "tajukBuku", "tarikhPerluDipulangkan"],
     PINJAMAN_BAKUL_BM: ["tarikhPinjaman", "kodNomborBakul", "namaGuruPeminjam", "tahunKelas", "bilanganBukuDalamBakul"],
@@ -1277,9 +1315,9 @@
       if (date.slice(0, 4) === currentYear) byMonth[Number(date.slice(5, 7)) - 1] += 1;
     });
     const byClass = countBy(usage, function (row) { return row.kelasUnitKumpulan || "Tidak dinyatakan"; });
-    const reviews = activeRows("RESENSI_TAHAP_2");
-    const reviewCounts = [4, 5, 6].map(function (year) {
-      return reviews.filter(function (row) { return new RegExp("Tahun\\s*" + year, "i").test(row.tahunKelas || ""); }).length;
+    const reviews = activeRows("RESENSI_TAHAP_1").concat(activeRows("RESENSI_TAHAP_2"));
+    const reviewCounts = [1, 2, 3, 4, 5, 6].map(function (year) {
+      return reviews.filter(function (row) { return new RegExp("^Tahun\\s*" + year + "(?:\\s|$)", "i").test(row.tahunKelas || ""); }).length;
     });
     const loanModules = ["PINJAMAN_KAMUS", "PINJAMAN_BUKU_GURU", "PINJAMAN_BUKU_MURID", "PINJAMAN_BAKUL_BM", "PINJAMAN_BAKUL_BI"];
     const loanCounts = loanModules.map(function (id) { return activeRows(id).length; });
@@ -1289,7 +1327,7 @@
     createChart("chartUsageMonth", "line", BM_MONTHS.map(function (name) { return name.slice(0, 3); }), byMonth, "Bilangan penggunaan", ["#0f766e"], true);
     const classEntries = Object.entries(byClass).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
     createChart("chartUsageClass", "bar", classEntries.map(function (item) { return item[0]; }), classEntries.map(function (item) { return item[1]; }), "Rekod", ["#14b8a6", "#f59e0b", "#38bdf8", "#fb7185"]);
-    createChart("chartReviewsYear", "bar", ["Tahun 4", "Tahun 5", "Tahun 6"], reviewCounts, "Resensi", ["#0f766e", "#f59e0b", "#38bdf8"]);
+    createChart("chartReviewsYear", "bar", ["Tahun 1", "Tahun 2", "Tahun 3", "Tahun 4", "Tahun 5", "Tahun 6"], reviewCounts, "Resensi", ["#0f766e", "#0f766e", "#0f766e", "#bc4d5e", "#bc4d5e", "#bc4d5e"]);
     createChart("chartLoansCategory", "doughnut", loanModules.map(function (id) { return MODULES[id].shortTitle; }), loanCounts, "Pinjaman", ["#0f766e", "#f59e0b", "#38bdf8", "#14b8a6", "#fb7185"]);
     createChart("chartBaskets", "bar", ["NILAM BM", "NILAM BI"], [activeRows("PINJAMAN_BAKUL_BM").length, activeRows("PINJAMAN_BAKUL_BI").length], "Pinjaman bakul", ["#0f766e", "#f59e0b"]);
     createChart("chartLoanStatus", "doughnut", ["Aktif", "Dipulangkan", "Lewat"], [
@@ -1428,9 +1466,12 @@
         control.removeAttribute("aria-invalid");
       }
     });
-    if (form.dataset.module === "RESENSI_TAHAP_2" && data.tahunKelas && !/Tahun\s*[456]/i.test(data.tahunKelas)) {
-      setFieldError(form, "tahunKelas", "Modul ini hanya untuk murid Tahun 4, Tahun 5 atau Tahun 6.");
-      valid = false;
+    if (module.reviewYears && data.tahunKelas) {
+      const year = /^Tahun\s*([1-6])(?:\s|$)/i.exec(data.tahunKelas.trim());
+      if (!year || !module.reviewYears.includes(Number(year[1]))) {
+        setFieldError(form, "tahunKelas", "Modul ini hanya untuk murid Tahun " + module.reviewYears.join(", Tahun ") + ".");
+        valid = false;
+      }
     }
     if (module.isLoan && data.tarikhPinjaman && data.tarikhPerluDipulangkan && data.tarikhPerluDipulangkan < data.tarikhPinjaman) {
       setFieldError(form, "tarikhPerluDipulangkan", "Tarikh pemulangan tidak boleh lebih awal daripada tarikh pinjaman.");
@@ -1525,6 +1566,11 @@
     }
     form.setAttribute("aria-busy", "true");
     showLoginFeedback(form, "Menyemak nama pengguna dan kata laluan...", "pending");
+    const cancelButton = form.querySelector('[data-action="cancel-login"]');
+    if (cancelButton) cancelButton.hidden = false;
+    const slowNotice = window.setTimeout(function () {
+      if (form.isConnected && state.loginPending) showLoginFeedback(form, "Masih menunggu Google Apps Script. Anda boleh batal dan cuba semula.", "pending");
+    }, 5000);
     postRender();
     try {
       const result = await DataService.login(values.username, values.password);
@@ -1555,13 +1601,15 @@
       const message = invalidCredentials
         ? "Nama pengguna atau kata laluan salah. Sila semak dan cuba semula."
         : error.message || "Log masuk gagal. Sila cuba semula.";
-      showLoginFeedback(form, message, "error");
+      showLoginFeedback(form, message, error.code === "LOGIN_CANCELLED" ? "pending" : "error");
       if (invalidCredentials) {
         form.elements.password.setAttribute("aria-invalid", "true");
         form.elements.password.focus();
       }
-      toast(message, "error");
+      if (error.code !== "LOGIN_CANCELLED") toast(message, "error");
     } finally {
+      window.clearTimeout(slowNotice);
+      if (cancelButton) cancelButton.hidden = true;
       state.loginPending = false;
       if (form.isConnected) {
         form.removeAttribute("aria-busy");
@@ -1809,7 +1857,7 @@
         ["Jumlah murid perempuan", sumBy(rows, "bilanganMuridPerempuan")]
       ];
     }
-    if (moduleId === "RESENSI_TAHAP_2") {
+    if (MODULES[moduleId].reviewYears) {
       return [
         ["Jumlah resensi", rows.length],
         ["Disahkan", rows.filter(function (row) { return row.statusPengesahan === "Disahkan"; }).length],
@@ -2072,6 +2120,7 @@
       return;
     }
     if (action === "home") location.hash = "#home";
+    if (action === "cancel-login" && state.loginController) state.loginController.abort();
     if (action === "login") location.hash = "#login";
     if (action === "admin-dashboard") {
       closeModal();
@@ -2084,9 +2133,11 @@
     }
     if (action === "open-module") {
       if (target.dataset.module === "PINJAMAN_BAKUL") location.hash = "#basket";
+      else if (target.dataset.module === "RESENSI_BUKU") location.hash = "#reviews";
       else location.hash = "#module/" + target.dataset.module;
     }
     if (action === "basket-choice") location.hash = "#basket";
+    if (action === "review-choice") location.hash = "#reviews";
     if (action === "admin-module") {
       closeModal();
       location.hash = "#admin/module/" + target.dataset.module;
@@ -2244,10 +2295,15 @@
   }
 
   async function route() {
+    if (state.routeHash !== location.hash) {
+      state.routeHash = location.hash;
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
     closeModal();
     state.charts.forEach(function (chart) { chart.destroy(); });
     state.charts = [];
     const path = (location.hash || "#home").replace(/^#/, "").split("/").filter(Boolean);
+    if (path[0] !== "login" && state.loginController) state.loginController.abort();
     if (path[0] === "admin") {
       if (!requireAdmin()) return;
       if (!state.recordsReady) {
@@ -2258,6 +2314,7 @@
     }
     if (!path.length || path[0] === "home") return renderHome();
     if (path[0] === "basket") return renderBasketChoice();
+    if (path[0] === "reviews") return renderReviewChoice();
     if (path[0] === "login") return renderLogin();
     if (path[0] === "module" && path[1]) return renderForm(path[1]);
     if (path[0] === "admin" && path[1] === "dashboard") return renderAdminDashboard();

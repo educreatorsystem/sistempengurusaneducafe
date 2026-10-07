@@ -6,6 +6,7 @@
 
 var GOOGLE_SHEET_ID = "1T2mYQNl3ogtALF7fwqJqsAQAk7uwLO3Uz6_ZsODZAtI";
 var SESSION_TIMEOUT_MINUTES = 30;
+var API_VERSION = "2026-10-07";
 var MAX_LOGIN_ATTEMPTS = 5;
 var MIN_ADMIN_PASSWORD_LENGTH = 7;
 var requestSpreadsheet_ = null;
@@ -70,11 +71,13 @@ var SHEET_DEFINITIONS = {
   ],
   LOG_AKTIVITI: ["action", "recordId", "details"]
 };
+SHEET_DEFINITIONS.RESENSI_TAHAP_1 = SHEET_DEFINITIONS.RESENSI_TAHAP_2.slice();
 
 var MODULE_PREFIXES = {
   PENGGUNAAN_PSS: "PSS",
   PINJAMAN_KAMUS: "KMS",
   RESENSI_TAHAP_2: "RSN",
+  RESENSI_TAHAP_1: "RS1",
   PINJAMAN_BUKU_GURU: "PBG",
   PINJAMAN_BUKU_MURID: "PBM",
   PINJAMAN_BAKUL_BM: "BNM",
@@ -104,11 +107,17 @@ var MODULE_TITLES = {
   PENGGUNAAN_PSS: "Penggunaan PSS",
   PINJAMAN_KAMUS: "Pinjaman Kamus",
   RESENSI_TAHAP_2: "Resensi Tahap 2",
+  RESENSI_TAHAP_1: "Resensi Tahap 1",
   PINJAMAN_BUKU_GURU: "Buku Guru",
   PINJAMAN_BUKU_MURID: "Buku Murid",
   PINJAMAN_BAKUL_BM: "Bakul NILAM BM",
   PINJAMAN_BAKUL_BI: "Bakul NILAM BI"
 };
+REQUIRED_FIELDS.RESENSI_TAHAP_1 = REQUIRED_FIELDS.RESENSI_TAHAP_2.slice();
+
+function isReviewModule_(module) {
+  return module === "RESENSI_TAHAP_1" || module === "RESENSI_TAHAP_2";
+}
 
 /**
  * Persediaan akaun tersuai (pilihan):
@@ -139,7 +148,7 @@ function setupAdminAccount() {
 
 function bootstrapAdminAccount_() {
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(3000)) throw new Error("Persediaan akaun sedang dijalankan. Sila cuba semula.");
   try {
     var properties = PropertiesService.getScriptProperties();
     var username = properties.getProperty("ADMIN_USERNAME");
@@ -147,7 +156,6 @@ function bootstrapAdminAccount_() {
     var passwordHash = properties.getProperty("ADMIN_PASSWORD_HASH");
     if (username && salt && passwordHash) return;
 
-    ensureSheetsUnlocked_();
     properties.setProperties({
       ADMIN_USERNAME: BOOTSTRAP_ADMIN_USERNAME,
       ADMIN_PASSWORD_SALT: BOOTSTRAP_ADMIN_PASSWORD_SALT,
@@ -200,6 +208,7 @@ function ensureModuleSheet_(spreadsheet, name) {
 function doGet() {
   return jsonResponse_(true, "API EduCafe aktif.", {
     application: "EduCafe @ D'Sutra",
+    version: API_VERSION,
     timeZone: "Asia/Kuala_Lumpur",
     timestamp: new Date().toISOString()
   });
@@ -211,7 +220,7 @@ function doPost(e) {
     var action = String(request.action || "").trim();
     if (!action) throw new Error("Tindakan API tidak dinyatakan.");
 
-    if (action === "health") return jsonResponse_(true, "API EduCafe aktif.", { timestamp: new Date().toISOString() });
+    if (action === "health") return jsonResponse_(true, "API EduCafe aktif.", { version: API_VERSION, timestamp: new Date().toISOString() });
     if (action === "login") return handleLogin_(request);
     if (action === "addRecord") return handleAddRecord_(request);
     if (action === "checkBasketConflict") return handleBasketCheck_(request);
@@ -337,24 +346,22 @@ function handleLogin_(request) {
     throw credentialsError;
   }
   cache.remove(attemptKey);
-  if (!cache.get("SESSION_CLEANUP_DONE")) {
-    cleanExpiredSessions_();
-    cache.put("SESSION_CLEANUP_DONE", "1", 3600);
-  }
-
   var token = Utilities.getUuid() + Utilities.getUuid() + String(new Date().getTime());
   var now = new Date().getTime();
   var expiresAt = now + sessionTimeoutMs_();
-  properties.setProperty(sessionKey_(token), JSON.stringify({
+  // Authentication never opens Sheets. Persist the audit event with the session.
+  var updates = queuedAuthEvent_("LOG_MASUK", "Log masuk admin berjaya.", expectedUsername);
+  updates[sessionKey_(token)] = JSON.stringify({
     username: expectedUsername,
     createdAt: now,
     lastActiveAt: now,
     expiresAt: expiresAt
-  }));
-  logActivity_("LOG_MASUK", "", "Log masuk admin berjaya.", expectedUsername);
+  });
+  properties.setProperties(updates);
   return jsonResponse_(true, "Log masuk admin berjaya.", {
     token: token,
     username: expectedUsername,
+    version: API_VERSION,
     expiresAt: expiresAt
   });
 }
@@ -391,7 +398,7 @@ function handleLogout_(token) {
   if (raw) {
     try {
       var session = JSON.parse(raw);
-      logActivity_("LOG_KELUAR", "", "Log keluar admin.", session.username || "Admin");
+      properties.setProperties(queuedAuthEvent_("LOG_KELUAR", "Log keluar admin.", session.username || "Admin"));
     } catch (error) {
       // Sesi akan tetap dipadam.
     }
@@ -604,7 +611,7 @@ function normalizeServerRecord_(module, incoming, existing, actionUser) {
     record.bilanganMuridPerempuan = safeNumber_(record.bilanganMuridPerempuan, 0);
     record.jumlahPengguna = record.bilanganMuridLelaki + record.bilanganMuridPerempuan;
   }
-  if (module === "RESENSI_TAHAP_2") {
+  if (isReviewModule_(module)) {
     record.tarikh = normalizeDate_(record.tarikh);
     record.bilanganHalaman = safeNumber_(record.bilanganHalaman, 1);
     record.statusPengesahan = record.statusPengesahan || "Belum Disahkan";
@@ -633,7 +640,7 @@ function enforcePublicDefaults_(module, record) {
       if (/SemasaDipulangkan$/.test(key)) record[key] = "";
     });
   }
-  if (module === "RESENSI_TAHAP_2") {
+  if (isReviewModule_(module)) {
     record.namaGuruPengesah = "";
     record.statusPengesahan = "Belum Disahkan";
     record.catatanGuru = "";
@@ -646,10 +653,13 @@ function validateRecord_(module, record) {
       throw new Error("Medan wajib belum lengkap: " + key + ".");
     }
   });
-  if (module === "RESENSI_TAHAP_2") {
-    if (!/Tahun\s*[456]/i.test(String(record.tahunKelas || ""))) {
-      throw new Error("Resensi Tahap 2 hanya untuk murid Tahun 4, Tahun 5 atau Tahun 6.");
+  if (isReviewModule_(module)) {
+    var years = module === "RESENSI_TAHAP_1" ? [1, 2, 3] : [4, 5, 6];
+    var year = /^Tahun\s*([1-6])(?:\s|$)/i.exec(String(record.tahunKelas || "").trim());
+    if (!year || years.indexOf(Number(year[1])) < 0) {
+      throw new Error(MODULE_TITLES[module] + " hanya untuk murid Tahun " + years.join(", Tahun ") + ".");
     }
+    if (!/^[1-5] bintang$/.test(String(record.penilaianBintang))) throw new Error("Pilih penilaian 1 hingga 5 bintang.");
     if (String(record.sinopsis || "").length > 800) throw new Error("Sinopsis melebihi 800 aksara.");
     if (String(record.nilaiMurni || "").length > 400) throw new Error("Nilai murni melebihi 400 aksara.");
   }
@@ -743,9 +753,11 @@ function rowToObject_(headers, values) {
 }
 
 function readRecords_(sheet, module, includeDeleted) {
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  var headers = getHeaders_(sheet);
-  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  if (!sheet) return [];
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var headers = values.shift().map(String);
+  requestHeaders_[sheet.getName()] = headers;
   return values.map(function (row) {
     var record = rowToObject_(headers, row);
     if (LOAN_MODULES.indexOf(module) >= 0) record.statusPinjaman = calculateLoanStatus_(record);
@@ -787,7 +799,7 @@ function filterRecords_(records, module, filters) {
   var query = String(filters.search || "").toLowerCase();
   var start = String(filters.dateStart || "");
   var end = String(filters.dateEnd || "");
-  var dateKey = module === "PENGGUNAAN_PSS" || module === "RESENSI_TAHAP_2" ? "tarikh" : "tarikhPinjaman";
+  var dateKey = module === "PENGGUNAAN_PSS" || isReviewModule_(module) ? "tarikh" : "tarikhPinjaman";
   return records.filter(function (record) {
     var haystack = Object.keys(record).map(function (key) { return String(record[key] || ""); }).join(" ").toLowerCase();
     var date = String(record[dateKey] || "").slice(0, 10);
@@ -801,12 +813,42 @@ function filterRecords_(records, module, filters) {
   });
 }
 
+function queuedAuthEvent_(action, details, username) {
+  var id = "AUTH_" + Utilities.getUuid();
+  var now = new Date().toISOString();
+  var update = {};
+  update[id] = JSON.stringify({
+    id: id, createdAt: now, updatedAt: now, statusRekod: "Aktif",
+    modul: "LOG_AKTIVITI", sumberModul: "Log Aktiviti", actionUser: username,
+    action: action, recordId: "", details: details
+  });
+  return update;
+}
+
+function flushAuthAuditUnlocked_(spreadsheet) {
+  var properties = PropertiesService.getScriptProperties();
+  var pending = properties.getProperties();
+  var sheet = spreadsheet.getSheetByName("LOG_AKTIVITI");
+  Object.keys(pending).filter(function (key) { return key.indexOf("AUTH_") === 0; }).slice(0, 50).forEach(function (key) {
+    var record = JSON.parse(pending[key]);
+    // Stable IDs make retries safe if a previous append succeeded before an error.
+    if (findRecordRow_(sheet, record.id) < 0) appendRecord_(sheet, "LOG_AKTIVITI", record);
+    SpreadsheetApp.flush();
+    properties.deleteProperty(key);
+  });
+  if (!CacheService.getScriptCache().get("SESSION_CLEANUP_DONE")) {
+    cleanExpiredSessions_();
+    CacheService.getScriptCache().put("SESSION_CLEANUP_DONE", "1", 3600);
+  }
+}
+
 function logActivity_(action, recordId, details, username) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
     var spreadsheet = getSpreadsheet_();
     ensureModuleSheet_(spreadsheet, "LOG_AKTIVITI");
+    flushAuthAuditUnlocked_(spreadsheet);
     logActivityUnlocked_(spreadsheet, action, recordId, details, username);
   } finally {
     lock.releaseLock();
@@ -882,4 +924,13 @@ function installMaintenanceTriggers() {
 
 function cleanExpiredSessionsTrigger() {
   cleanExpiredSessions_();
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return;
+  try {
+    var spreadsheet = getSpreadsheet_();
+    ensureModuleSheet_(spreadsheet, "LOG_AKTIVITI");
+    flushAuthAuditUnlocked_(spreadsheet);
+  } finally {
+    lock.releaseLock();
+  }
 }
